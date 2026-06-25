@@ -1,0 +1,139 @@
+# syntax=docker/dockerfile:1
+FROM node:22-slim AS base
+
+ENV PNPM_HOME="/pnpm"
+ENV PATH="$PNPM_HOME:$PATH"
+ENV CI=true
+
+RUN corepack enable
+
+FROM golang:1.24 AS go-build
+WORKDIR /app
+COPY apps/api/sharedLibs/go-html-to-md ./sharedLibs/go-html-to-md
+
+RUN cd sharedLibs/go-html-to-md && \
+    go mod download && \
+    go build -o libhtml-to-markdown.so -buildmode=c-shared html-to-markdown.go
+
+FROM base AS build
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y \
+    curl \
+    build-essential \
+    pkg-config \
+    python3 \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG FDB_VERSION=7.3.63
+RUN ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in arm64) FDB_ARCH=aarch64 ;; *) FDB_ARCH=$ARCH ;; esac && \
+    curl -fsSL -o /tmp/fdb-clients.deb \
+      "https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/foundationdb-clients_${FDB_VERSION}-1_${FDB_ARCH}.deb" && \
+    dpkg -i /tmp/fdb-clients.deb && rm /tmp/fdb-clients.deb
+
+ENV RUSTUP_HOME=/usr/local/rustup \
+    CARGO_HOME=/usr/local/cargo \
+    PATH=/usr/local/cargo/bin:$PATH
+
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --no-modify-path \
+    && chmod -R a+w $RUSTUP_HOME $CARGO_HOME
+
+COPY apps/api/pnpm-lock.yaml apps/api/pnpm-workspace.yaml apps/api/package.json ./
+COPY apps/api/patches ./patches
+COPY apps/api/native ./native
+
+RUN --mount=type=cache,id=pnpm,target=/pnpm/store \
+    --mount=type=cache,target=/usr/local/cargo/registry \
+    --mount=type=cache,target=/app/native/target \
+    pnpm install --frozen-lockfile
+
+COPY apps/api .
+
+RUN rm -rf dist && pnpm run build
+ARG GIT_SHA=unknown
+RUN test -s dist/src/index.js && \
+    test -s dist/src/controllers/v0/crawl-status.js && \
+    printf '%s\n' "$GIT_SHA" > BUILD_SHA
+
+RUN pnpm prune --prod --ignore-scripts
+
+FROM base AS playwright-build
+WORKDIR /opt/playwright-service
+
+ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright
+
+COPY apps/playwright-service-ts/package.json apps/playwright-service-ts/tsconfig.json ./
+COPY apps/playwright-service-ts/api.ts ./api.ts
+COPY apps/playwright-service-ts/helpers ./helpers
+
+RUN npm install && \
+    npx playwright install chromium && \
+    npm run build && \
+    npm prune --omit=dev
+
+FROM base AS runtime
+
+RUN apt-get update && apt-get install -y \
+    git \
+    procps \
+    curl \
+    redis-server \
+    python3 \
+    python3-venv \
+    python3-dev \
+    build-essential \
+    libxml2-dev \
+    libxslt1-dev \
+    zlib1g-dev \
+    libffi-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+ARG SEARXNG_REF=master
+RUN git clone --depth 1 --branch "${SEARXNG_REF}" https://github.com/searxng/searxng.git /opt/searxng && \
+    python3 -m venv /opt/searxng-venv && \
+    /opt/searxng-venv/bin/pip install --upgrade pip setuptools wheel && \
+    /opt/searxng-venv/bin/pip install -r /opt/searxng/requirements.txt && \
+    /opt/searxng-venv/bin/pip install --no-build-isolation -e /opt/searxng
+
+ARG FDB_VERSION=7.3.63
+RUN ARCH=$(dpkg --print-architecture) && \
+    case "$ARCH" in arm64) FDB_ARCH=aarch64 ;; *) FDB_ARCH=$ARCH ;; esac && \
+    curl -fsSL -o /tmp/fdb-clients.deb \
+      "https://github.com/apple/foundationdb/releases/download/${FDB_VERSION}/foundationdb-clients_${FDB_VERSION}-1_${FDB_ARCH}.deb" && \
+    dpkg -i /tmp/fdb-clients.deb && rm /tmp/fdb-clients.deb
+
+WORKDIR /app
+ARG GIT_SHA=unknown
+ENV FIRECRAWL_BUILD_SHA=$GIT_SHA
+ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright
+ENV HOST=0.0.0.0
+ENV PORT=3002
+ENV USE_DB_AUTHENTICATION=false
+ENV PLAYWRIGHT_MICROSERVICE_URL=http://127.0.0.1:3000/scrape
+ENV BLOCK_MEDIA=true
+ENV MAX_CONCURRENT_PAGES=5
+ENV REDIS_URL=redis://127.0.0.1:6379
+ENV REDIS_RATE_LIMIT_URL=redis://127.0.0.1:6379
+ENV SEARXNG_ENDPOINT=http://127.0.0.1:8080
+
+EXPOSE 3002
+
+COPY --from=build /app/node_modules ./node_modules
+COPY --from=build /app/dist ./dist
+COPY --from=build /app/native ./native
+COPY --from=build /app/BUILD_SHA ./BUILD_SHA
+COPY --from=go-build /app/sharedLibs/go-html-to-md/libhtml-to-markdown.so ./sharedLibs/go-html-to-md/
+COPY --from=playwright-build /opt/playwright-service /opt/playwright-service
+COPY --from=playwright-build /usr/local/share/playwright /usr/local/share/playwright
+COPY apps/api/docker/basic-entrypoint.sh ./basic-entrypoint.sh
+COPY apps/api/docker/searxng-settings.yml /etc/searxng/settings.yml
+
+RUN /opt/playwright-service/node_modules/.bin/playwright install-deps chromium
+
+RUN chmod +x ./basic-entrypoint.sh
+
+RUN node -e 'const fs = require("fs"); for (const p of ["dist/src/index.js", "dist/src/controllers/v0/crawl-status.js", "BUILD_SHA", "/opt/playwright-service/dist/api.js"]) { if (!fs.statSync(p).size) throw new Error(`${p} missing or empty`); }'
+
+CMD ["./basic-entrypoint.sh"]
