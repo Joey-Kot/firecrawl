@@ -80,7 +80,8 @@ ARG SEARXNG_REF=master
 RUN git clone --depth 1 --branch "${SEARXNG_REF}" https://github.com/searxng/searxng.git /opt/searxng && \
     python3 -m venv /opt/searxng-venv && \
     /opt/searxng-venv/bin/pip install --upgrade pip setuptools wheel && \
-    /opt/searxng-venv/bin/pip install -e /opt/searxng
+    /opt/searxng-venv/bin/pip install -r /opt/searxng/requirements.txt && \
+    /opt/searxng-venv/bin/pip install --no-build-isolation -e /opt/searxng
 
 ARG FDB_VERSION=7.3.63
 RUN ARCH=$(dpkg --print-architecture) && \
