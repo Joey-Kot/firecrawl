@@ -62,6 +62,7 @@ export async function search({
         lang,
         country,
         location,
+        type,
       });
       if (results.web && results.web.length > 0) return results;
     }

@@ -64,7 +64,23 @@ RUN apt-get update && apt-get install -y \
     git \
     procps \
     curl \
+    redis-server \
+    python3 \
+    python3-venv \
+    python3-dev \
+    build-essential \
+    libxml2-dev \
+    libxslt1-dev \
+    zlib1g-dev \
+    libffi-dev \
+    libssl-dev \
     && rm -rf /var/lib/apt/lists/*
+
+ARG SEARXNG_REF=master
+RUN git clone --depth 1 --branch "${SEARXNG_REF}" https://github.com/searxng/searxng.git /opt/searxng && \
+    python3 -m venv /opt/searxng-venv && \
+    /opt/searxng-venv/bin/pip install --upgrade pip setuptools wheel && \
+    /opt/searxng-venv/bin/pip install -e /opt/searxng
 
 ARG FDB_VERSION=7.3.63
 RUN ARCH=$(dpkg --print-architecture) && \
@@ -80,6 +96,9 @@ ENV HOST=0.0.0.0
 ENV PORT=3002
 ENV USE_DB_AUTHENTICATION=false
 ENV PLAYWRIGHT_MICROSERVICE_URL=
+ENV REDIS_URL=redis://127.0.0.1:6379
+ENV REDIS_RATE_LIMIT_URL=redis://127.0.0.1:6379
+ENV SEARXNG_ENDPOINT=http://127.0.0.1:8080
 
 EXPOSE 3002
 
@@ -88,7 +107,11 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/native ./native
 COPY --from=build /app/BUILD_SHA ./BUILD_SHA
 COPY --from=go-build /app/sharedLibs/go-html-to-md/libhtml-to-markdown.so ./sharedLibs/go-html-to-md/
+COPY docker/basic-entrypoint.sh ./basic-entrypoint.sh
+COPY docker/searxng-settings.yml /etc/searxng/settings.yml
+
+RUN chmod +x ./basic-entrypoint.sh
 
 RUN node -e 'const fs = require("fs"); for (const p of ["dist/src/index.js", "dist/src/controllers/v0/crawl-status.js", "BUILD_SHA"]) { if (!fs.statSync(p).size) throw new Error(`${p} missing or empty`); }'
 
-CMD ["node", "dist/src/index.js"]
+CMD ["./basic-entrypoint.sh"]

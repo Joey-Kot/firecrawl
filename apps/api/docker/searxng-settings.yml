@@ -1,0 +1,13 @@
+use_default_settings: true
+
+server:
+  bind_address: "127.0.0.1"
+  port: 8080
+  secret_key: "firecrawl-basic-local-searxng"
+  limiter: false
+  image_proxy: false
+
+search:
+  formats:
+    - html
+    - json
