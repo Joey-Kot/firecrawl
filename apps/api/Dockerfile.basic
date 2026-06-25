@@ -63,15 +63,14 @@ WORKDIR /opt/playwright-service
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/usr/local/share/playwright
 
-COPY apps/playwright-service-ts/package.json apps/playwright-service-ts/pnpm-lock.yaml apps/playwright-service-ts/tsconfig.json ./
+COPY apps/playwright-service-ts/package.json apps/playwright-service-ts/tsconfig.json ./
 COPY apps/playwright-service-ts/api.ts ./api.ts
 COPY apps/playwright-service-ts/helpers ./helpers
 
-RUN --mount=type=cache,id=playwright-pnpm,target=/pnpm/store \
-    pnpm install --frozen-lockfile && \
-    pnpm exec playwright install chromium && \
-    pnpm run build && \
-    pnpm prune --prod
+RUN npm install && \
+    npx playwright install chromium && \
+    npm run build && \
+    npm prune --omit=dev
 
 FROM base AS runtime
 
