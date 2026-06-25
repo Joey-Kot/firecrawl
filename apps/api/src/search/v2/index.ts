@@ -5,6 +5,18 @@ import { searxng_search } from "./searxng";
 import { ddgSearch } from "./ddgsearch";
 import { Logger } from "winston";
 
+function hasRequestedResults(
+  results: SearchV2Response,
+  type?: SearchResultType | SearchResultType[],
+): boolean {
+  const requestedTypes = Array.isArray(type) ? type : type ? [type] : ["web"];
+
+  return requestedTypes.some(resultType => {
+    const values = results[resultType];
+    return Array.isArray(values) && values.length > 0;
+  });
+}
+
 export async function search({
   query,
   logger,
@@ -64,7 +76,7 @@ export async function search({
         location,
         type,
       });
-      if (results.web && results.web.length > 0) return results;
+      if (hasRequestedResults(results, type)) return results;
     }
 
     logger.info("Using DuckDuckGo search");

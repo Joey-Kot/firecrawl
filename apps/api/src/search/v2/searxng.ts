@@ -72,24 +72,29 @@ export async function searxng_search(
   const fetchCategory = async (
     category: "general" | "news" | "images",
   ): Promise<any[]> => {
-    const pagesToFetch = Math.max(
-      1,
-      Math.ceil(requestedResults / resultsPerPage),
-    );
-    let results: any[] = [];
+    try {
+      const pagesToFetch = Math.max(
+        1,
+        Math.ceil(requestedResults / resultsPerPage),
+      );
+      let results: any[] = [];
 
-    for (let pageOffset = 0; pageOffset < pagesToFetch; pageOffset += 1) {
-      const pageResults = await fetchPage(startPage + pageOffset, category);
-      if (pageResults.length === 0) {
-        break;
+      for (let pageOffset = 0; pageOffset < pagesToFetch; pageOffset += 1) {
+        const pageResults = await fetchPage(startPage + pageOffset, category);
+        if (pageResults.length === 0) {
+          break;
+        }
+        results = results.concat(pageResults);
+        if (results.length >= requestedResults) {
+          break;
+        }
       }
-      results = results.concat(pageResults);
-      if (results.length >= requestedResults) {
-        break;
-      }
+
+      return results.slice(0, requestedResults);
+    } catch (error) {
+      logger.warn("SearXNG category search failed", { category, error });
+      return [];
     }
-
-    return results.slice(0, requestedResults);
   };
 
   try {

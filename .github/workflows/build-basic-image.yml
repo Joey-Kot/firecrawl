@@ -6,7 +6,9 @@ on:
       - main
     paths:
       - apps/api/**
+      - apps/playwright-service-ts/**
       - .github/workflows/build-basic-image.yml
+      - .dockerignore
   workflow_dispatch:
 
 permissions:
@@ -49,7 +51,7 @@ jobs:
       - name: Build and push image
         uses: docker/build-push-action@v6
         with:
-          context: apps/api
+          context: .
           file: apps/api/Dockerfile.basic
           push: true
           platforms: linux/amd64
